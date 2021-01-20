@@ -453,7 +453,9 @@ class VGGBackbone(nn.Module):
 
 
 def construct_backbone(cfg, in_channels=3):
-    """ Constructs a backbone given a backbone config object (see config.py). """
+    """ Constructs a backbone given a backbone config object (see config.py).
+        add parameter in_channels for supporting task that takes RGBD, or RGB+motion, etc. as input
+    """
     backbone = cfg.type(*cfg.args, in_channels=in_channels)
 
     # Add downsampling layers until we reach the number we need

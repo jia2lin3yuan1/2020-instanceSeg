@@ -18,7 +18,7 @@ The implementation is based on YOLACT's implementation at [Yolact-github](https:
 # Installation
  - Clone this repository and enter it:
    ```Shell
-   git clone  xxx.git
+   git clone https://github.com/jia2lin3yuan1/2020-instanceSeg.git
    cd yolact
    ```
  - Set up the environment using one of the following methods:
@@ -35,7 +35,8 @@ The implementation is based on YOLACT's implementation at [Yolact-github](https:
        pip install scikit-image
        pip install scipy==1.2.0
        ```
- - If you'd like to train DVIS, download the COCO dataset and the 2014/2017 annotations. Note that this script will take a while and dump 21gb of files into `./data/coco`.
+ - If you'd like to train DVIS, download the COCO dataset and the 2014/2017 annotations. 
+   Note that this script will take a while and dump 21gb of files into `./data/coco`.
    ```Shell
    sh data/scripts/COCO.sh
    ```
@@ -43,7 +44,7 @@ The implementation is based on YOLACT's implementation at [Yolact-github](https:
    ```Shell
    sh data/scripts/COCO_test.sh
    ```
- - If you want to use YOLACT++ base, compile deformable convolutional layers (from [DCNv2](https://github.com/CharlesShang/DCNv2/tree/pytorch_1.0)).
+ - If you want to use DCN base, compile deformable convolutional layers (from [DCNv2](https://github.com/CharlesShang/DCNv2/tree/pytorch_1.0)).
    Make sure you have the latest CUDA toolkit installed from [NVidia's Website](https://developer.nvidia.com/cuda-toolkit).
    ```Shell
    cd external/DCNv2

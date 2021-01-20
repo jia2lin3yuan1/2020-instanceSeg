@@ -491,37 +491,6 @@ def no_inf_mean(x:torch.Tensor):
     else:
         return x.mean()
 
-def compute_validation_loss(net, data_loader, criterion, loss_keys):
-    with torch.no_grad():
-        losses = {}
-
-        # Don't switch to eval mode because we want to get losses
-        iterations = 0
-        for datum in data_loader:
-            images, targets, masks, num_crowds = prepare_data(datum)
-            out = net(images)
-
-            wrapper = ScatterWrapper(targets, masks, num_crowds)
-            _losses = criterion(out, wrapper, wrapper.make_mask())
-
-            for k, v in _losses.items():
-                v = v.mean().item()
-                if k in losses:
-                    losses[k] += v
-                else:
-                    losses[k] = v
-
-            iterations += 1
-            if args.validation_size <= iterations * args.batch_size:
-                break
-
-        for k in losses:
-            losses[k] /= iterations
-
-
-        loss_labels = sum([[k, losses[k]] for k in loss_keys if k in losses], [])
-        print(('Validation ||' + (' %s: %.3f |' * len(losses)) + ')') % tuple(loss_labels), flush=True)
-
 
 if __name__ == '__main__':
     if torch.cuda.device_count() == 0:

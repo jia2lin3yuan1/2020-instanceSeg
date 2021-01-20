@@ -131,7 +131,7 @@ class PermuInvLoss(nn.Module):
     def forward(self, preds, targets, target_ids=None, weights=None, BG=False, sigma=1e-3):
         ''' Compute the permutation invariant loss on pixel pairs if both pixels are in the instances.
         Params:
-            preds/targets -- [bs, 1, ht, wd]. here, ch could be:
+            preds/targets -- [bs, 1, ht, wd]. here,
                             ** preds is logits from Relu(), targets are integer labels
             weights -- [bs, 1, ht, wd]
             BG -- if True, treat BG as one instance.
@@ -142,8 +142,8 @@ class PermuInvLoss(nn.Module):
         bs, ch, ht, wd = targets.size()
 
         # reshape
-        preds_1D = preds.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, ch]
-        targets_1D = targets.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, ch]
+        preds_1D = preds.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, 1]
+        targets_1D = targets.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, 1]
         if weights is not None:
             weight_1D = weights.view(bs, -1, 1)
 
@@ -158,25 +158,10 @@ class PermuInvLoss(nn.Module):
             # compute pairwise differences over pred/target/weight
             smpl_pred = preds_1D[b][smpl_idx,:]
             smpl_target = targets_1D[b][smpl_idx,:].float()
-            if ch ==1:# '''l1 distance = abs(x1-x2)'''
-                pi_pred = torch.clamp(torch.abs(smpl_pred-smpl_pred.permute(1,0)), 1e-4, 5)
-                pi_target = (torch.abs(smpl_target - smpl_target.permute(1,0))>0.5).float()
-            else:#'''cosine distance = 1-(x1x2)/(|x1|*|x2|)'''
-                pred_numi = torch.matmul(smpl_pred, smpl_pred.permute(1,0)) #[N, N]
-                if False:
-                    pi_pred = 1 - pred_numi
-                else:
-                     pred_tmp  = smpl_pred.pow(2).sum(axis=1).pow(0.5) # size [N]
-                     pred_demi = torch.matmul(pred_tmp[:,None], pred_tmp[None,:])
-                     pi_pred   = 1 - pred_numi/pred_demi
 
-                target_numi = torch.matmul(smpl_target, smpl_target.permute(1,0))
-                if False:
-                    pi_target = target_numi
-                else:
-                     target_tmp  = smpl_target.pow(2).sum(axis=1).pow(0.5) # size [N]
-                     target_demi = torch.matmul(target_tmp[:,None], target_tmp[None,:])
-                     pi_target   = ((target_numi/target_demi)<0.5).float()
+            # l1 distance = abs(x1-x2)
+            pi_pred = torch.clamp(torch.abs(smpl_pred-smpl_pred.permute(1,0)), 1e-4, 5) # [N, N]
+            pi_target = (torch.abs(smpl_target - smpl_target.permute(1,0))>0.5).float()
 
             if weights is not None:
                 smpl_weight = weight_1D[b][smpl_idx, :]

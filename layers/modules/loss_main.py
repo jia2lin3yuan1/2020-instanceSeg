@@ -12,8 +12,7 @@ class LossEvaluate(nn.Module):
         1) binary loss to separate BG and FG
         2) permutation invariant loss to separate different instances and group pixels in one obj.
         3) M-S loss to regularize the segmentation level
-        4) if predict in 1 channel, use quantity loss to force predicted value close to integer.
-           else, use iou-loss to force predicted value close to 1 on corresponding GT.
+        4) use quantity loss to force predicted value close to integer.
     '''
     def __init__(self, config, class_weights=None, ignore_label=[255]):
         """
@@ -134,7 +133,6 @@ class LossEvaluate(nn.Module):
         weights_0 = gts_rs[:, -1:, :, :]
         preds_0 = preds
         _, gts_0 = gts_rs[:, :-1, :, :].max(axis=1, keepdim=True)
-        gts_onehot = (gts_rs[:, :(gts_0.max()+1), :, :]>0.5).int()
 
         if 'glb_trend_en' in self.config and self.config['glb_trend_en']==1:
             plain = self.create_global_slope_plane(ht, wd)

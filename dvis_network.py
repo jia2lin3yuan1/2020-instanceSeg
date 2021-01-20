@@ -30,17 +30,6 @@ if not use_jit:
 ScriptModuleWrapper = torch.jit.ScriptModule if use_jit else nn.Module
 script_method_wrapper = torch.jit.script_method if use_jit else lambda fn, _rcn=None: fn
 
-class Concat(nn.Module):
-    def __init__(self, nets, extra_params):
-        super().__init__()
-        self.extra_params = extra_params
-
-    def forward(self, x):
-        # Concat each along the channel dimension
-        return torch.cat([net(x) for net in self.nets], dim=1, **self.extra_params)
-
-prior_cache = defaultdict(lambda: None)
-
 
 class FPN(ScriptModuleWrapper):
     """
