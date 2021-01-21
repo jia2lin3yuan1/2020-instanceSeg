@@ -12,8 +12,6 @@
 A simple, fully convolutional model for real-time instance segmentation. This is the code for our papers:
  - [Deep Variational Instance Segmentation](https://arxiv.org/abs/2007.11576)
 
-The implementation is based on YOLACT's implementation at [Yolact-github](https://github.com/dbolya/yolact)
-
 
 # Installation
  - Clone this repository and enter it:
