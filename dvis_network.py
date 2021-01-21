@@ -294,7 +294,7 @@ if __name__ == '__main__':
         from data.config import set_cfg
         set_cfg(sys.argv[1])
 
-    net = Yolact()
+    net = DVIS()
     net.train()
     net.init_weights(backbone_path='weights/' + cfg.backbone.path)
 

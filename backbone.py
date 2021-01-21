@@ -92,8 +92,7 @@ class ResNetBackbone(nn.Module):
 
         # This contains every module that should be initialized by loading in pretrained weights.
         # Any extra layers added onto this that won't be initialized by init_backbone will not be
-        # in this list. That way, Yolact::init_weights knows which backbone weights to initialize
-        # with xavier, and which ones to leave alone.
+        # in this list.
         self.backbone_modules = [m for m in self.modules() if isinstance(m, nn.Conv2d)]
 
 
@@ -184,7 +183,6 @@ class ResNetBackboneGN(ResNetBackbone):
         layeridx2res = lambda x: 'res' + str(int(x)+2)
         block2branch = lambda x: 'branch2' + ('a', 'b', 'c')[int(x[-1:])-1]
 
-        # Transcribe each Detectron weights name to a Yolact weights name
         for key in our_state_dict_keys:
             parts = key.split('.')
             transcribed_key = ''
@@ -282,8 +280,7 @@ class DarkNetBackbone(nn.Module):
 
         # This contains every module that should be initialized by loading in pretrained weights.
         # Any extra layers added onto this that won't be initialized by init_backbone will not be
-        # in this list. That way, Yolact::init_weights knows which backbone weights to initialize
-        # with xavier, and which ones to leave alone.
+        # in this list.
         self.backbone_modules = [m for m in self.modules() if isinstance(m, nn.Conv2d)]
 
     def _make_layer(self, block, channels, num_blocks, stride=2):

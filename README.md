@@ -1,4 +1,4 @@
-# **Y**ou **O**nly **L**ook **A**t **C**oefficien**T**s
+# Deep Variational Instance Segmentation 
 ```
     ████████║   ██         ██  ██████████    █████████║
     ██      █║   █         █      ║██║       █║
@@ -16,8 +16,8 @@ A simple, fully convolutional model for real-time instance segmentation. This is
 # Installation
  - Clone this repository and enter it:
    ```Shell
-   git clone https://github.com/jia2lin3yuan1/2020-instanceSeg.git
-   cd yolact
+   git clone https://github.com/jia2lin3yuan1/2020-instanceSeg.git $PRJ_NAME
+   cd  $PRJ_NAME
    ```
  - Set up the environment using one of the following methods:
    - Using [Anaconda](https://www.anaconda.com/distribution/)
