@@ -317,7 +317,7 @@ def change_backbone_resnet50(base_config):
             'selected_layers': list(range(1, 4)),
         }),
     })
-
+    return resnet50_config
 
 # ---------------------------------------------------------------------#
 def overwrite_from_json_config(fpath, args, option=dict()):
