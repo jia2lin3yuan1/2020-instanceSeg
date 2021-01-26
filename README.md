@@ -12,6 +12,7 @@
 A simple, fully convolutional model for real-time instance segmentation. This is the code for our papers:
  - [Deep Variational Instance Segmentation](https://arxiv.org/abs/2007.11576)
 
+The implementation of backbone network is based on repository: [Yolact-github](https://github.com/dbolya/yolact)
 
 # Installation
  - Clone this repository and enter it:
@@ -41,12 +42,6 @@ A simple, fully convolutional model for real-time instance segmentation. This is
  - If you'd like to evaluate DVIS on `test-dev`, download `test-dev` with this script.
    ```Shell
    sh data/scripts/COCO_test.sh
-   ```
- - If you want to use DCN base, compile deformable convolutional layers (from [DCNv2](https://github.com/CharlesShang/DCNv2/tree/pytorch_1.0)).
-   Make sure you have the latest CUDA toolkit installed from [NVidia's Website](https://developer.nvidia.com/cuda-toolkit).
-   ```Shell
-   cd external/DCNv2
-   python setup.py build develop
    ```
 
 ## Train on your own dataset:
