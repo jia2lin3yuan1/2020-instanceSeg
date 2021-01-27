@@ -355,8 +355,7 @@ def train(args, cfg, option, DataSet):
                 if torch.isfinite(all_loss).item():
                     optimizer.step()
 
-                _, ret['preds'] = ret['preds'].max(axis=1, keepdim=True)
-                #ret['preds'] = torch.nn.Softmax2d()(ret['preds'])[:, :1, :, :]
+                ret['preds'] = torch.nn.ReLU()(ret['preds'])
                 vis_imgs  = {k:ret[k] for k in vis_keys if k in ret}
 
                 cur_time  = time.time()
