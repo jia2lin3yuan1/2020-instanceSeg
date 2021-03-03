@@ -1,0 +1,51 @@
+{
+    "args":{
+        "dataset": "pascal2012_dataset",
+        "batch_size": 2,
+        "start_iter": 0,
+        "config": "resnet50_config",
+        "resume": "**.pth",
+        "save_folder": "../pascal/weights/",
+        "log_folder": "../pascal/logs/",
+        "exp_name": "EXPERIEMNT",
+        "lr": 1e-4,
+        "save_interval": 2000
+    },
+    "option":{
+        "pi_alpha": 0,
+        "pi_margin": 1.0,
+        "pi_mode": "sample-list",
+        "pi_smpl_pairs": 1028,
+        "pi_ksize": [17, 33],
+        "pi_kcen": 3,
+        "pi_kdilate":4,
+        "pi_smpl_wght_en": 1,
+        "pi_hasBG": 1,
+
+        "binary_alpha": 0,
+        "binary_margin":2.0,
+
+        "rfn_en": 1,
+        "rfn_iou_alpha":1.0,
+        "rfn_cls_alpha":1.0,
+        "rfn_seg_alpha":1.0,
+
+        "regul_alpha": 0.0,
+        "quanty_alpha": 0.0,
+        "glb_trend_en": 0,
+        
+        "eval_en": 1,
+        "eval_size_thrs":0,
+        "eval_cls_score_thr":0.5,
+        "eval_iou_thr":0.5,
+        
+        "model_firstLayer_en": 1, 
+        "model_lastLayer_en": 1, 
+        "model_clsLayer_en": 1,
+
+        "bkb_lr_alpha": 1.0,
+        "fpn_lr_alpha": 1.0,
+        "proto_net_lr_alpha": 1.0,
+        "classify_lr_alpha": 100.0
+    }
+}

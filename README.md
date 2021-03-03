@@ -43,6 +43,8 @@ The implementation of backbone network is based on repository: [Yolact-github](h
    ```Shell
    sh data/scripts/COCO_test.sh
    ```
+ - Install pymeanshift following instruction on [Install](https://github.com/fjean/pymeanshift/wiki/Install)
+
 
 ## Train on your own dataset:
  - You could edit the config_xx.py in data/ to customize the network setting and dataset setting.

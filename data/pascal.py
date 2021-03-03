@@ -38,8 +38,7 @@ class PASCALDetection(Detection):
                                             transform,
                                             AnnotationTransform(option),
                                             running_mode,
-                                            model_mode,
-                                            option.sem_fg_stCH)
+                                            model_mode)
 
         self.ignore_label = option.ignore_label
         self.name = dataset_name
@@ -75,18 +74,17 @@ class PASCALDetection(Detection):
             anns = self.pull_anno(index)
             semI, masks, target = anns['sem'], anns['inst_mask'], anns['bbox']
         else:
-            semI, masks, targets = None, None, None
+            semI, masks, target = None, None, None
 
         if target is None:
             masks  = np.zeros([1, height, width], dtype=np.float)
-            target = np.array([[0,0,1,1,0]])
+            target = np.array([[0,0,1.,1.,0]])
 
         # add BG semantic channels, for panoptic segmentation
         if semI is not None:
-            sem_bgs =np.asarray([[0,0,1,1,0]]*self.sem_fg_stCH)
-            sem_bg_maskI = np.zeros([self.sem_fg_stCH, height, width])
-            for k in range(self.sem_fg_stCH):
-                sem_bg_maskI[k] = (semI==k).astype(np.float)
+            sem_bgs         = np.asarray([[0,0,1.,1.,0]])
+            sem_bg_maskI    = np.zeros([1, height, width])
+            sem_bg_maskI[0] = (semI==0).astype(np.float)
             masks  = np.concatenate([sem_bg_maskI, masks], axis=0)
             target = np.concatenate([sem_bgs, target], axis=0)
 

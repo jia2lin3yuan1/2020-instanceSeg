@@ -17,16 +17,16 @@ COCO_CLASSES_FG = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 
                    'scissors', 'teddy bear', 'hair drier', 'toothbrush'] # 77~80
 COCO_CLASSES = COCO_CLASSES_BG + COCO_CLASSES_FG
 
-COCO_LABEL_FG = {  1:  1,  2:  2,  3:  3,  4:  4,  5:  5,  6:  6,  7:  7,  8:  8,
-                   9:  9, 10: 10, 11: 11, 13: 12, 14: 13, 15: 14, 16: 15, 17: 16,
-                  18: 17, 19: 18, 20: 19, 21: 20, 22: 21, 23: 22, 24: 23, 25: 24,
-                  27: 25, 28: 26, 31: 27, 32: 28, 33: 29, 34: 30, 35: 31, 36: 32,
-                  37: 33, 38: 34, 39: 35, 40: 36, 41: 37, 42: 38, 43: 39, 44: 40,
-                  46: 41, 47: 42, 48: 43, 49: 44, 50: 45, 51: 46, 52: 47, 53: 48,
-                  54: 49, 55: 50, 56: 51, 57: 52, 58: 53, 59: 54, 60: 55, 61: 56,
-                  62: 57, 63: 58, 64: 59, 65: 60, 67: 61, 70: 62, 72: 63, 73: 64,
-                  74: 65, 75: 66, 76: 67, 77: 68, 78: 69, 79: 70, 80: 71, 81: 72,
-                  82: 73, 84: 74, 85: 75, 86: 76, 87: 77, 88: 78, 89: 79, 90: 80}
+COCO_LABEL_FG = {  1:  1,  2:  2,  3:  3,  4:  4,  5:  5,  6:  6,  7:  7,  8:  8, 9:  9, 10: 10,
+                  11: 11, 13: 12, 14: 13, 15: 14, 16: 15, 17: 16, 18: 17, 19: 18, 20: 19,
+                  21: 20, 22: 21, 23: 22, 24: 23, 25: 24, 27: 25, 28: 26,
+                  31: 27, 32: 28, 33: 29, 34: 30, 35: 31, 36: 32, 37: 33, 38: 34, 39: 35, 40: 36,
+                  41: 37, 42: 38, 43: 39, 44: 40, 46: 41, 47: 42, 48: 43, 49: 44, 50: 45,
+                  51: 46, 52: 47, 53: 48, 54: 49, 55: 50, 56: 51, 57: 52, 58: 53, 59: 54, 60: 55,
+                  61: 56, 62: 57, 63: 58, 64: 59, 65: 60, 67: 61, 70: 62,
+                  72: 63, 73: 64, 74: 65, 75: 66, 76: 67, 77: 68, 78: 69, 79: 70, 80: 71,
+                  81: 72, 82: 73, 84: 74, 85: 75, 86: 76, 87: 77, 88: 78, 89: 79, 90: 80}
+
 COCO_LABEL_MAP = { 0:0, 255:255}
 COCO_LABEL_MAP.update(COCO_LABEL_FG)
 
@@ -73,7 +73,6 @@ coco_dataset_base = Config({
     # provide a map from category_id -> index in class_names + 1 (the +1 is there because it's 1-indexed).
     # If not specified, this just assumes category ids start at 1 and increase sequentially.
     'label_map': None,
-    'sem_fg_stCH': 1
 })
 
 coco2014_dataset = coco_dataset_base.copy({
@@ -137,9 +136,6 @@ coco_base_config = Config({
     # For each lr step, what to multiply the lr with
     'gamma': 0.1,
     'lr_steps': (100000, 200000, 360000, 400000),
-
-    # Initial learning rate to linearly warmup from (if until > 0)
-    'lr_warmup_init': 1e-4,
 
     # If > 0 then increase the lr linearly from warmup_init to lr each iter for until iters
     'lr_warmup_until': 500,
@@ -233,15 +229,27 @@ coco_base_config = Config({
 base_network_config = setup_network_base_config(coco_base_config,
                             coco2017_dataset,
                             lr_steps=[100000, 200000, 500000, 700000, 750000],
-                            max_size=700),
+                            max_size=550,
                             classify_en=1,
-                            classify_rs_size=14)
+                            classify_rs_size=14,
+                            net_in_channels=3,
+                            mf_sradius=[7,11],
+                            mf_rradius=[0.4, 0.9],
+                            mf_num_keep=[40, 20],
+                            mf_size_thr=[5,20])
 
 resnet50_config = change_backbone_resnet50(base_network_config)
 resnet101_config = base_network_config
 
+plus_resnet50_550_config = change_backbone_resnet50_dcn(base_network_config)
+plus_resnet50_700_config = change_config_imgSize(plus_resnet50_550_config, imgSize=700)
+
+plus_resnet101_550_config = change_backbone_resnet101_dcn(base_network_config)
+plus_resnet101_700_config = change_config_imgSize(plus_resnet101_550_config, imgSize=700)
+
+
 # Default config
-cfg = resnet50_config_700.copy()
+cfg = resnet50_config.copy()
 
 def set_dataset(cfg, dataset_name:str):
     """ Sets the dataset of the current config. """

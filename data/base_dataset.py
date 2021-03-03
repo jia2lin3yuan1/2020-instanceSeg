@@ -46,6 +46,8 @@ class AnnotationTransform(object):
             a list containing lists of bounding boxes [xmin, ymin, xmax, ymax, class_idx]
         """
         raise NotImplementedError
+    def getLabelMap(self):
+        return self.label_map
 
 class FromImageAnnotationTransform(AnnotationTransform):
     """ Transform labeled instance image and semantic image into a tensor of bbox coords and label index as (x0, y0, x1, y1, cls_id)
@@ -124,7 +126,7 @@ class Detection(data.Dataset):
 
     def __init__(self, image_path, mask_ch=1, sem_weights=None,
                  transform=None, target_transform=None,
-                 running_mode='test', model_mode='InstSeg', sem_fg_stCH=1):
+                 running_mode='test', model_mode='InstSeg'):
         '''
         Args: model_mode: 'InstSeg' | 'SemSeg' | 'ObjDet'
         '''
@@ -138,7 +140,6 @@ class Detection(data.Dataset):
         self.has_gt = False if running_mode=='test' else True
         self.model_mode = model_mode
         self.mask_out_ch = mask_ch
-        self.sem_fg_stCH = sem_fg_stCH
 
 
     def __getitem__(self, index):
@@ -160,7 +161,6 @@ class Detection(data.Dataset):
                                                                  self.mask_out_ch,
                                                                  self.sem_weights,
                                                                  num_crowds=num_crowds,
-                                                                 sem_fg_stCH=self.sem_fg_stCH,
                                                                  isTrain=self.isTrain)
             if self.model_mode == 'InstSeg':
                 masks = torch.from_numpy(np.concatenate([instGT, wghts], axis=0))
@@ -175,7 +175,7 @@ class Detection(data.Dataset):
             ax[1].imshow(instGT.argmax(axis=0))
             ax[2].imshow(semGT[0])
             ax[3].imshow(wghts[0])
-            plt.show(); pdb.set_trace()
+            plt.show();
             ta = self.pull_item(index)
 
         return im, (target, masks, num_crowds)
@@ -212,15 +212,15 @@ class Detection(data.Dataset):
 
     def construct_inst_sem_label(self, masks, target, mask_out_ch=64,
                                         sem_weights=None, num_crowds=0,
-                                        sem_fg_stCH=1, isTrain=False, fg_thr=0.3):
+                                        isTrain=False, fg_thr=0.3):
         def _compute_weights_one_instance(mask, sem_id, base_cnt):
             inst_wght = np.cbrt(base_cnt/(mask.sum()+1.))
             sem_wght  = 1.0 if sem_weights is None else sem_weights[sem_id]
             return np.clip(sem_wght*inst_wght, 1.0, 10.0)
 
         # main process.
-        sem_masks, masks = masks[:sem_fg_stCH], masks[sem_fg_stCH:]
-        target = target[sem_fg_stCH:]
+        bgI, masks = masks[0], masks[1:]
+        target = target[1:]
 
         # Remove crowed objects in training. designed for coco
         if num_crowds > 0:
@@ -242,21 +242,18 @@ class Detection(data.Dataset):
         base_cnt = float(ht*wd)
 
         # compute background value
-        semI = sem_masks.argmax(axis=0)
-        semI[masks.sum(axis=0)>fg_thr] = 0
-        for k in range(sem_fg_stCH):
-            semGT[0, semI==k] = k
-            instGT[k, semI==k] = 1
-            wghts[0, semI==k] = _compute_weights_one_instance(instGT[k], 0, base_cnt)
+        semGT[0, bgI>0]  = 0
+        instGT[0, bgI>0] = 1
+        wghts[0, bgI>0]  = _compute_weights_one_instance(instGT[0], 0, base_cnt)
 
         # compute FG value
         for ik, k in enumerate(idx[:mask_out_ch-1]):
-            new_target[ik+sem_fg_stCH] = target[k]
+            new_target[ik+1] = target[k]
 
             # FG object has higher prior than BG stuff
             # smaller object has higher priority to cover large object
             instGT[:, masks[k]>fg_thr] = 0
-            instGT[ik+sem_fg_stCH]     = masks[k]>fg_thr
+            instGT[ik+1]     = masks[k]>fg_thr
 
             semGT[0, masks[k]>0]  = target[k, -1]
             wghts[0, masks[k]>0]  = _compute_weights_one_instance(masks[k]>0,

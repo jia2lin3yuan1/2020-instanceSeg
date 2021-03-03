@@ -41,7 +41,6 @@ pascal_dataset_base = Config({
     'ignore_label': 255,
 
     'label_map': None,
-    'sem_fg_stCH': 1
 })
 
 pascal2012_dataset = pascal_dataset_base.copy({
@@ -67,7 +66,7 @@ pascal_base_config = Config({
     'num_fg_classes': len(PASCAL_CLASSES_FG),
     'gt_inst_ch':  28, # channels to parse GT instances mask
 
-    'max_iter': 90000,
+    'max_iter': 100000,
 
     # The maximum number of detections for evaluation
     'max_num_detections': 50,
@@ -81,11 +80,8 @@ pascal_base_config = Config({
     'gamma': 0.1,
     'lr_steps': (10000, 20000, 36000, 40000),
 
-    # Initial learning rate to linearly warmup from (if until > 0)
-    'lr_warmup_init': 1e-4,
-
     # If > 0 then increase the lr linearly from warmup_init to lr each iter for until iters
-    'lr_warmup_until': 500,
+    'lr_warmup_until': 0, #500,
 
     # See mask_type for details.
     'mask_proto_net': [(256, 3, {}), (256, 3, {})],
@@ -172,18 +168,26 @@ pascal_base_config = Config({
 
 
 #-----------------Network config -------------------------------#
-
+# base network is dvis_resnet101_SC_size
 base_network_config = setup_network_base_config(pascal_base_config,
                             pascal2012_dataset,
                             lr_steps=[10000, 20000, 50000, 70000, 75000],
                             max_size=769,
                             classify_en=1,
-                            classify_rs_size=14)
+                            classify_rs_size=14,
+                            net_in_channels=3,
+                            mf_sradius=[9,11],
+                            mf_rradius=[0.4, 0.9],
+                            mf_num_keep=[40, 20],
+                            mf_size_thr=[5,20])
 
 resnet50_config = change_backbone_resnet50(base_network_config)
 resnet101_config = base_network_config
 
+plus_resnet50_config  = change_backbone_resnet50_dcn(base_network_config)
+plus_resnet101_config = change_backbone_resnet101_dcn(base_network_config)
 
+# ------------------------------------------------------------------------#
 # Default config
 cfg = resnet50_config.copy()
 

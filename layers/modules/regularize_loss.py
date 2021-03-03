@@ -15,7 +15,10 @@ class QuantityLoss(nn.Module):
         @Param: preds -- instance map after relu. size [bs, 1, ht, wd]
         '''
         assert(preds.size()[1]==1)
-        return torch.abs(preds - torch.round(preds)).mean()
+        if preds.max() > 0:
+            return torch.abs(preds[preds>0] - torch.round(preds[preds>0])).mean()
+        else:
+            return None
 
 class MumfordShahLoss(nn.Module):
     '''This class computes the Mumford-Shah regularization loss on the prediction of the network.
@@ -54,5 +57,10 @@ class MumfordShahLoss(nn.Module):
             else:
                 tmp = torch.log(loss_h**2 + loss_v**2 +1)
                 loss.extend([tmp])
-        return torch.stack(loss).mean()
+
+        loss = torch.stack(loss)
+        if loss.max() > 0:
+            return loss[loss>0].mean()
+        else:
+            return None
 

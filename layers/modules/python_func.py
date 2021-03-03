@@ -60,7 +60,8 @@ def create_pairwise_conv_kernel(kernel_size,
 
 
 if __name__=='__main__':
-    import pdb; pdb.set_trace()
+    import pdb
+    pdb.set_trace()
     ta, nei_cnt_0 = create_pairwise_conv_kernel([129, 193], 12,
                                                 dia_stride=2,
                                                 return_neiCnt=True)

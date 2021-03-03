@@ -178,7 +178,6 @@ vgg16_backbone = backbone_base.copy({
     'type': VGGBackbone,
     'args': (vgg16_arch, [(256, 2), (128, 2), (128, 1), (128, 1)], [3]),
     'transform': vgg_transform,
-
     'selected_layers': [3] + list(range(5, 10)),
 })
 
@@ -224,13 +223,20 @@ fpn_base = Config({
 
 
 
-# ----------------------- based on YOLACT v1.0 CONFIGS ----------------------- #
+# --------------- based on YOLACT v1.0 CONFIGS ----------------------- #
+# model name in format: dvis_network_arch_inSize
+#       i.e. dvis_resnet50_SC_550,  dvis_plusResnet101_MC-ROI_769
+# --------------------------------------
 def setup_network_base_config(dataset_config, dataset, lr_steps, max_size=550,
-                              mask_out_ch=1, mask_out_levels=[0],
                               classify_en=0, classify_rs_size=7,
-                              net_in_channels=3):
+                              net_in_channels=3,
+                              mf_sradius=[7,11],
+                              mf_rradius=[0.4,0.9],
+                              mf_num_keep=[40,20],
+                              mf_size_thr=[5,20]):
+    name = 'dvis_resnet101_'
     base_config = dataset_config.copy({
-        'name': 'dvis_' + str(max_size),
+        'name': name + str(max_size),
 
         # Dataset stuff
         'dataset': dataset,
@@ -259,49 +265,42 @@ def setup_network_base_config(dataset_config, dataset, lr_steps, max_size=550,
 
         # Mask Settings
         #'mask_proto_src': 0,
-        'mask_out_ch': mask_out_ch,
-        'mask_out_levels': mask_out_levels,
         'mask_proto_net': [(256, 3, {'padding': 1})] * 3 + \
                             [(None, -2, {}), (256, 3, {'padding': 1})] + \
-                              [(mask_out_ch, 1, {})],
+                              [(1, 1, {})],
 
         # for single channel net
         # meanshift params
-        'mf_spatial_radius': [9, 9],
-        'mf_range_radius': [0.5, 1.1],
-        'mf_density': [5, 20],
-        'roi_size':(14, 14),
+        'mf_spatial_radius': mf_sradius,
+        'mf_range_radius': mf_rradius,
+        'mf_num_keep':  mf_num_keep,
+        'mf_size_thr': mf_size_thr,
+        'roi_size':(classify_rs_size, classify_rs_size),
 
         # classify branch
         'classify_en': classify_en,
-        'classify_linear_size': classify_rs_size
+        'classify_rs_size': classify_rs_size
 
     })
-
-    #base_config.dataset.update('max_size', max_size)
-    #base_config.dataset.update('discard_box_width', 4 / max_size)
-    #base_config.dataset.update('discard_box_height',  4 / max_size)
-
     return base_config
+
 
 def change_config_imgSize(base_config, imgSize=400):
     imSize_config = base_config.copy({
         'name': '_'.join(base_config.name.split('_')[:-1]) + '_' + str(imgSize),
         'max_size': imgSize,
-        'discard_box_width': 4./max_size,
-        'discard_box_height': 4./max_size
+        'discard_box_width': 4./imgSize,
+        'discard_box_height': 4./imgSize
     })
-    #imSize_config.dataset.update('max_size', imgSize)
-    #imSize_config.dataset.update('discard_box_width', 4 / imgSize)
-    #imSize_config.dataset.update('discard_box_height',  4 / imgSize)
 
     return imSize_config
 
 
+# ----------------------- Backbones ----------------------- #
 def change_backbone_darknet53(base_config):
+    names = base_config.name.split('_')
     darknet53_config = base_config.copy({
-        'name': 'dvis_darknet53' + '_' + str(base_config.max_size),
-
+        'name': '_'.join(names[:1] + ['darknet53'] + names[2:]),
         'backbone': darknet53_backbone.copy({
             'selected_layers': list(range(2, 5)),
         }),
@@ -310,26 +309,59 @@ def change_backbone_darknet53(base_config):
 
 
 def change_backbone_resnet50(base_config):
+    names = base_config.name.split('_')
     resnet50_config = base_config.copy({
-        'name': 'dvis_resnet50'+ '_' + str(base_config.max_size),
-
+        'name': '_'.join(names[:1] + ['resnet50'] + names[2:]),
         'backbone': resnet50_backbone.copy({
             'selected_layers': list(range(1, 4)),
         }),
     })
+
     return resnet50_config
 
-# ---------------------------------------------------------------------#
-def overwrite_from_json_config(fpath, args, option=dict()):
-    with open(fpath, 'r') as f:
-        rd = json.load(f)
+def change_backbone_resnet101_dcn(base_config):
+    names = base_config.name.split('_')
+    plus_resnet101_config = base_config.copy({
+        'name': '_'.join(names[:1] + ['plusResnet101'] + names[2:]),
 
-    for key in rd:
-        if(key == 'args'):
-            for kk in rd[key]:
-                setattr(args, kk, rd[key][kk])
-        else: # option
-            for kk in rd[key]:
-                option[kk] = rd[key][kk]
+        'backbone': resnet101_dcn_inter3_backbone.copy({
+            'selected_layers': list(range(1, 4)),
+        }),
+
+        'rescore_bbox': False,
+        'rescore_mask': True,
+    })
+    return plus_resnet101_config
+
+
+def change_backbone_resnet50_dcn(base_config):
+    names = base_config.name.split('_')
+    plus_resnet50_config = base_config.copy({
+        'name': '_'.join(names[:1] + ['plusResnet50'] + names[2:]),
+
+        'backbone': resnet50_dcnv2_backbone.copy({
+            'selected_layers': list(range(1, 4)),
+        }),
+    })
+
+    return plus_resnet50_config
+
+# ---------------------------------------------------------------------#
+def overwrite_args_from_json(fpath, args):
+    with open(fpath, 'r') as f:
+        json_dict = json.load(f)
+
+    key = 'args'
+    if key in json_dict:
+        for kk in json_dict[key]:
+            setattr(args, kk, json_dict[key][kk])
+
+    return json_dict
+
+
+def overwrite_params_from_json(json_dict, option=dict(), key='option'):
+    if key in json_dict:
+        for kk in json_dict[key]:
+            option[kk] = json_dict[key][kk]
 
 

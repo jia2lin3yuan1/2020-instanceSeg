@@ -37,8 +37,7 @@ class COCODetection(Detection):
                                             transform,
                                             AnnotationTransform(option),
                                             running_mode,
-                                            model_mode,
-                                            option.sem_fg_stCH)
+                                            model_mode)
 
         # Do this here because we have too many things named COCO
         from pycocotools.coco import COCO
@@ -54,16 +53,18 @@ class COCODetection(Detection):
         self.num_classes = len(option.class_names)
 
 
-    def save_subpath(self, index, result_path='', subPath=''):
+    def save_subpath(self, index, result_path='', sub_path=''):
         img_id = self.ids[index]
         fname = self.coco.loadImgs(img_id)[0]['file_name']
+        if fname.startswith('COCO'):
+            fname = fname.split('_')[-1]
         result_path   = osp.join(result_path, sub_path)
         os.makedirs(result_path, exist_ok=True)
         return {'fname': fname,
                 'out_dir': result_path,
                 'file_key': self.ids[index]}
 
-    def construct_semantic_image(self, inst_masks, targets):
+    def construct_sem_inst_image(self, inst_masks, targets):
         '''
         Args:
             inst_masks: numpy array, in [N, ht, wd]
@@ -74,12 +75,11 @@ class COCODetection(Detection):
         instI = np.concatenate([np.zeros([1, ht, wd]), inst_masks], axis=0).argmax(axis=0)
         rpl_dict = {0:0}
         for k, ele in enumerate(targets):
-            sem_id = 0 if ele[-1] < 0 else
-                    (ele[-1] if self.panoptic_seg else self.label_map[ele[-1]])
+            sem_id = 0 if ele[-1] < 0 else ele[-1]
             rpl_dict[k+1] = sem_id
 
         semI = np.vectorize(rpl_dict.get)(instI)
-        return semI
+        return semI, instI
 
     def pull_item(self, index):
         """
@@ -110,20 +110,18 @@ class COCODetection(Detection):
             semI, masks, target = anns['sem'], anns['inst_mask'], anns['bbox']
             num_crowds          = anns['num_crowds']
         else:
-            semI, masks, targets = None, None, None
-
-        if not self.has_gt or len(target)==0:
-            masks      = np.zeros([1,height, width], dtype=np.float)
-            target     = np.array([[0,0,1,1,-1]])
+            semI, masks, target = None, None, None
             num_crowds = 0
 
+        if target is None:
+            masks      = np.zeros([1,height, width], dtype=np.float)
+            target = np.array([[0,0,1.,1.,0]])
+
         # add BG semantic channels, for panoptic segmentation
-        if self.has_gt:
-            semI = self.construct_semantic_image(masks, target)
-            sem_bgs =np.asarray([[0,0,1,1,0]]*self.sem_fg_stCH)
-            sem_bg_maskI = np.zeros([self.sem_fg_stCH, height, width])
-            for k in range(self.sem_fg_stCH):
-                sem_bg_maskI[k] = (semI==k).astype(np.float)
+        if semI is not None:
+            sem_bgs         = np.asarray([[0,0,1.,1.,0]])
+            sem_bg_maskI    = np.zeros([1, height, width])
+            sem_bg_maskI[0] = (semI==0).astype(np.float)
             masks  = np.concatenate([sem_bg_maskI, masks], axis=0)
             target = np.concatenate([sem_bgs, target], axis=0)
 
@@ -155,8 +153,11 @@ class COCODetection(Detection):
             dict of network input
         '''
         img_id = self.ids[index]
-        path   = self.coco.loadImgs(img_id)[0]['file_name']
-        bgrI   = cv2.imread(osp.join(self.root, path), cv2.IMREAD_COLOR)
+        fname  = self.coco.loadImgs(img_id)[0]['file_name']
+        if fname.startswith('COCO'):
+            fname = fname.split('_')[-1]
+
+        bgrI   = cv2.imread(osp.join(self.root, fname), cv2.IMREAD_COLOR)
         return {'rgb': bgrI[..., [2,1,0]]}
 
     def pull_anno(self, index):
@@ -174,10 +175,16 @@ class COCODetection(Detection):
                                    inst: inst label image in [ht, wd]
         '''
         img_id = self.ids[index]
-        ann_ids = self.coco.getAnnIds(imgIds=img_id)
+        finfo  = self.coco.loadImgs(img_id)[0]
+        height, width = finfo['height'], finfo['width']
 
         # Target has {'segmentation', 'area', iscrowd', 'image_id', 'bbox', 'category_id'}
-        target  = self.coco.loadAnns(ann_ids)
+        target = self.coco.imgToAnns[img_id]
+
+        ''' another way to get the target via img_id
+        #       ann_ids = self.coco.getAnnIds(imgIds=img_id)
+        #       target  = self.coco.loadAnns(ann_ids)
+        '''
 
         # Separate out crowd annotations. These are annotations that signify a large crowd of
         # objects of said class, where there is no annotation for each individual object.
@@ -185,25 +192,31 @@ class COCODetection(Detection):
         # Ensure sure that all crowd annotations are at the end of the array
         crowd  = [x for x in target if     ('iscrowd' in x and x['iscrowd'])]
         target = [x for x in target if not ('iscrowd' in x and x['iscrowd'])]
-        for x in crowd:
-            x['category_id'] = -1
-        target += crowd
         num_crowds = len(crowd)
 
-        # obtain bbox and mask
+        for x in crowd:
+            x['category_id'] = -1
+
+        # This is so we ensure that all crowd annotations are at the end of the array
+        target += crowd
+
+        # The split here is to have compatibility with both COCO2014 and 2017 annotations.
+        # In 2014, images have the pattern COCO_{train/val}2014_%012d.jpg, while in 2017 it's %012d.jpg.
+        # Our script downloads the images as %012d.jpg so convert accordingly.
+
+        # Pool all the masks for this image into one [num_objects,height,width] matrix
+        if len(target) > num_crowds: # don't care crowds objects
+            masks = [self.coco.annToMask(obj).reshape(-1) for obj in target]
+            masks = np.vstack(masks)
+            masks = masks.reshape(-1, height, width)
+
         if self.target_transform is not None and len(target) > 0:
             target = self.target_transform(target, width, height)
-            target = np.array(target)
+            semI, instI = self.construct_sem_inst_image(masks, target)
 
-            if len(target) == 0:
-                masks, target = None, None
-            else:
-                # Pool all the masks for this image into one [num_objects,height,width] matrix
-                masks = [self.coco.annToMask(obj).reshape(-1) for obj in target]
-                masks = np.vstack(masks)
-                masks = masks.reshape(-1, height, width) # (N, ht, wd)
-        else:
+        if len(target) == 0:
             masks, target = None, None
+            semI, instI = None, None
 
         return {'bbox': target,
                 'inst_mask': masks,

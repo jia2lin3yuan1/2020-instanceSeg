@@ -8,9 +8,9 @@ from math import sqrt
 from typing import List
 from collections import defaultdict
 
-#from layers import Detect
-#from layers.interpolate import InterpolateModule
 from backbone import construct_backbone
+from discritizer import Discritizer
+from refineNet import RefineNet
 
 import torch.backends.cudnn as cudnn
 from utils import timer
@@ -29,6 +29,17 @@ if not use_jit:
 
 ScriptModuleWrapper = torch.jit.ScriptModule if use_jit else nn.Module
 script_method_wrapper = torch.jit.script_method if use_jit else lambda fn, _rcn=None: fn
+
+class Concat(nn.Module):
+    def __init__(self, nets, extra_params):
+        super().__init__()
+        self.extra_params = extra_params
+
+    def forward(self, x):
+        # Concat each along the channel dimension
+        return torch.cat([net(x) for net in self.nets], dim=1, **self.extra_params)
+
+prior_cache = defaultdict(lambda: None)
 
 
 class FPN(ScriptModuleWrapper):
@@ -132,11 +143,10 @@ class FPN(ScriptModuleWrapper):
 class DVIS(nn.Module):
     """
 
-    ████████║   ██         ██  ██████████    █████████║
+    ████████║   ██         ██  ██████████    █████████
     ██      █║   █         █      ║██║       █║
-    ██       █║   █       █       ║██║       █████████║
-    ██       █║    █     █        ║██║              ██║
-    ██      █║      █   █         ║██║              ██║
+    ██       █║   █       █       ║██║       █████████
+    ██      █║     █     █        ║██║             ║██
     ███████║        █████      ██████████    █████████
 
     You can set the arguments by changing them in the backbone config object in config.py.
@@ -147,7 +157,6 @@ class DVIS(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-
         self.cfg = cfg
         self.backbone = construct_backbone(cfg.backbone, cfg.net_in_channels)
         if cfg.freeze_bn:
@@ -170,11 +179,59 @@ class DVIS(nn.Module):
         # The include_last_relu=false here is because we might want to change it to another function
         self.proto_net, cfg.mask_dim = make_net(in_channels, cfg.mask_proto_net, include_last_relu=False)
 
+        # the mask branch output concatenate to the backbone features for classification
+        if cfg.classify_en:
+            self.classifyModule_SC(fea_layers=[in_channels])
+        return
+
+    def classifyModule_SC(self, fea_layers=[256]):
+        candidate_params = [{'mf_sradius': self.cfg.mf_spatial_radius[k],
+                             'mf_rradius': self.cfg.mf_range_radius[k],
+                             'mf_num_keep': self.cfg.mf_num_keep[k],
+                             'mf_size_thr': self.cfg.mf_size_thr[k]
+                            } for k in range(len(self.cfg.mf_spatial_radius))]
+
+        self.discritizers = []
+        for cand_param in candidate_params:
+            self.discritizers.append(Discritizer(cand_param))
+
+        num_classes = self.cfg.num_fg_classes+1
+        self.refine_net = RefineNet(self.cfg.roi_size, fea_layers, num_classes)
+        return
+
+    def forward_classify_SC(self, mask_logits, net_fea):
+        ''''
+        @Param: mask_logits -- instance mask logits, in size [bs, 1, ht, wd]
+                net_fea -- backbone feature, in size [bs', ch', ht', wd']
+        @Output:
+            labelI -- list (len= # of mf bandwidth) of list (# batch size),
+                        for each element is a onehot label tensor in size [N, ht, wd]
+            obj_bboxes -- list of tensor object boxes with size [N, 7],
+                            (bs_idx, x0, y0, x1, y1,label_idx, real_label)
+                          boxes coordinate depends on pred_label
+            cls_logits -- classify_logits with size [N, num_classes]
+            iou_scores -- iou score with size [N, 1]
+            obj_masks -- object mask with size [N, 1, msize, msize]
+        '''
+        labelImgs, obj_bboxes = [], []
+        for discritizer in self.discritizers:
+            dsc_out = discritizer(mask_logits)
+            labelImgs.append(dsc_out['mask'])
+            obj_bboxes.append(dsc_out['bboxes'])
+
+        rois    = torch.cat(obj_bboxes, dim=0)
+        rfn_out = self.refine_net(mask_logits, net_fea, rois)
+        return {'labelI': labelImgs,
+                'obj_bboxes':  obj_bboxes,
+                'cls_logits': rfn_out['cls'],
+                'iou_scores': rfn_out['iou'],
+                'obj_masks':  rfn_out['mask']}
+
     def save_weights(self, path):
         """ Saves the model's weights using compression because the file sizes were getting too big. """
         torch.save(self.state_dict(), path)
 
-    def load_weights(self, path, load_firstLayer=True, load_lastLayer=True):
+    def load_weights(self, path, load_firstLayer=True, load_lastLayer=True, load_clsLayer=True):
         """ Loads weights from a compressed save file. """
         map_device = torch.device(0) if torch.cuda.is_available() else 'cpu'
         state_dict = torch.load(path, map_location=map_device)
@@ -184,11 +241,14 @@ class DVIS(nn.Module):
             if key.startswith('backbone.layer') and not key.startswith('backbone.layers'):
                 del state_dict[key]
 
-            if not load_firstLayer and \
+            if (not load_firstLayer) and \
                (key.startswith('backbone.layers.0.0.conv1') or key.startswith('backbone.conv1')):
                 del state_dict[key]
 
-            if not load_lastLayer and key.startswith('proto_net.10'):
+            if (not load_lastLayer) and key.startswith('proto_net.10'):
+                del state_dict[key]
+
+            if (not load_clsLayer) and key.startswith('refine'):
                 del state_dict[key]
 
             # Also for backward compatibility with v1.0 weights, do this check
@@ -231,8 +291,9 @@ class DVIS(nn.Module):
                         and all_in(conv_constants, module.__dict__['_constants_set']))
 
             is_conv_layer = isinstance(module, nn.Conv2d) or is_script_conv
+            is_linear_layer = isinstance(module, nn.Linear)
 
-            if is_conv_layer and module not in self.backbone.backbone_modules:
+            if (is_conv_layer or is_linear_layer) and module not in self.backbone.backbone_modules:
                 nn.init.xavier_uniform_(module.weight.data)
 
                 if module.bias is not None:
@@ -270,15 +331,21 @@ class DVIS(nn.Module):
                 # Use backbone.selected_layers
                 outs     = [outs[i] for i in self.cfg.backbone.selected_layers]
                 fpn_outs = self.fpn(outs)
+        else:
+            fpn_outs = outs
 
-        #import pdb; pdb.set_trace()
-        proto_out = []
         with timer.env('proto'):
-            proto_out = []
-            for k in self.cfg.mask_out_levels:
-                proto_out.append(self.proto_net(fpn_outs[k]))
+            proto_out = self.proto_net(fpn_outs[0])
 
-        return {'proto': proto_out, 'fea':outs}
+        # base return components
+        ret_dict = {'proto': proto_out, 'fea':outs, 'cls_logits': None}
+
+        # if enable classify
+        if self.cfg.classify_en:
+            with timer.env('classify'):
+                ret_dict['cls_logits'] = self.forward_classify_SC(proto_out, fpn_outs[0])
+
+        return ret_dict
 
 
 # Some testing code
@@ -294,7 +361,7 @@ if __name__ == '__main__':
         from data.config import set_cfg
         set_cfg(sys.argv[1])
 
-    net = DVIS()
+    net = Yolact()
     net.train()
     net.init_weights(backbone_path='weights/' + cfg.backbone.path)
 
