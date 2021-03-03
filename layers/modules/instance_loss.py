@@ -1,3 +1,4 @@
+#copyright (c) 2021-present, jialin yuan@Deep Vision Group
 import numpy as np
 import torch
 from torch import nn
