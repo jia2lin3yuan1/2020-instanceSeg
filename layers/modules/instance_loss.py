@@ -127,60 +127,60 @@ class PermuInvLoss(nn.Module):
         self.loss_type = loss_type
         self.fg_stCH = FG_stCH
 
-    @torch.no_grad()
-    def sampling_over_objects(self, targets, target_classes, BG=0):
+    def sampling_over_objects(self, targets_onehot, target_classes, BG=0):
         '''
         Params:
-            targets -- tensor in [N, ch] with integers values.
-            target_classes -- if not None, in size [M], M is No. of Objs in targets.
-                              if ch>1, M==ch
+            targets_onehot -- tensor in [N, ch] with integers values.
+            target_classes -- if not None, in size [ch], ch is No. of Objs in targets.
             BG -- if True, BG is counted as one object.
         '''
         eff_idx, smpl_wght = [], []
-
-        N, ch   = targets.size()
-        targets_onehot = targets if ch>1 else torch.eye(targets.max()+1)[targets[:,0].long(),:]
-        cnts    = targets_onehot.sum(axis=0)
+        cnts    = targets_onehot.sum(axis=0)  #[ch]
         num_obj = (cnts>0).sum() if BG else (cnts[self.fg_stCH:]>0).sum()
 
-        if num_obj > 0:
-            # sample over each object
-            avg     = self.pi_pairs//num_obj
-            for k, cnt in enumerate(cnts):
-                if cnt==0 or (BG==0 and k<self.fg_stCH):
-                    continue
+        # sample over each object
+        avg     = self.pi_pairs//num_obj
+        for k in range(cnts.size(0)):
+            if cnts[k]==0 or (BG==0 and k<self.fg_stCH):
+                continue
 
-                # sample index on current object
-                idx = (targets_onehot[:, k]==1).nonzero()
-                perm = torch.randperm(idx.size(0))
-                cur_sel = idx[perm][:avg]
-                smpl_size = torch.FloatTensor([cur_sel.size(0)]).cuda()
-                obj_wght = torch.pow(self.pi_pairs/(smpl_size + 1.), 1./3)
-                if target_classes is not None and self.class_weights is not None:
-                    obj_wght += self.class_weights[target_classes[k]]
+            # sample index on current object
+            idx = targets_onehot[:, k].nonzero()
+            perm = torch.randperm(idx.size(0))
+            cur_sel = idx[perm][:avg]
+            smpl_size = torch.FloatTensor([cur_sel.size(0)]).cuda()
+            obj_wght = torch.pow(self.pi_pairs/(smpl_size + 1.), 1./3)
+            if target_classes is not None and self.class_weights is not None:
+                obj_wght += self.class_weights[target_classes[k]]
 
-                # add into the whole stack.
-                eff_idx.extend(cur_sel)
-                smpl_wght.extend(torch.ones(cur_sel.size(0), 1, dtype=torch.float)*obj_wght)
-        return eff_idx, smpl_wght
+            # add into the whole stack.
+            eff_idx.append(cur_sel)
+            smpl_wght.append(torch.ones(cur_sel.size(0), 1, dtype=torch.float)*obj_wght)
 
-    def forward(self, preds, targets, target_ids=None, weights=None, BG=False, sigma=1e-3):
+        if len(eff_idx) == 0:
+            return None, None
+        else:
+            eff_idx = torch.cat(eff_idx, axis=0).squeeze() #[N]
+            smpl_wght = torch.cat(smpl_wght, axis=0) #[N,1]
+            return eff_idx, smpl_wght
+
+    def forward(self, preds, targets, target_ids=None, weights=None, BG=False, sigma=1e-2):
         ''' Compute the permutation invariant loss on pixel pairs if both pixels are in the instances.
         Params:
-            preds/targets -- [bs, ch, ht, wd]. here, ch could be:
-                            ** ch == 1, preds is logits from Relu(), targets is label value
-                            ** ch >  1, preds is prob from Softmax(), targets is one_hot label
+            preds -- [bs, 1, ht, wd] from Relu(). here, ch could be:
+            targets -- [bs, ch', ht, wd]. onehot matrix
             weights -- [bs, 1, ht, wd]
+            target_ids -- [bs, ch']
             BG -- if True, treat BG as one instance.
                 | if False, don't sample point on BG pixels,
                             and compute difference only on FG channels if ch>1
         '''
         all_loss = []
-        bs, ch, ht, wd = targets.size()
+        bs, ch, ht, wd = preds.size()
 
         # reshape
-        preds_1D = preds.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, ch]
-        targets_1D = targets.view(bs, ch, -1).permute(0, 2, 1) # in size [bs, N, ch]
+        preds_1D = preds.view(bs, ch, ht*wd).permute(0, 2, 1) # in size [bs, N, ch]
+        targets_1D = targets.view(bs, -1, ht*wd).permute(0, 2, 1) # in size [bs, N, ch']
         if weights is not None:
             weight_1D = weights.view(bs, -1, 1)
 
@@ -188,24 +188,26 @@ class PermuInvLoss(nn.Module):
         all_loss = []
         eval_pi0, eval_pi1 = [], []
         for b in range(bs):
-            smpl_idx, smpl_wght = self.sampling_over_objects(targets_1D[b], target_ids[b], BG=BG)
-            if len(smpl_idx) == 0:
+            with torch.no_grad():
+                smpl_idx, smpl_wght = self.sampling_over_objects(targets_1D[b], target_ids[b], BG=BG)
+
+            if smpl_idx is None:
                 continue
 
             # compute pairwise differences over pred/target/weight
-            smpl_pred = preds_1D[b][smpl_idx,:]
-            smpl_target = targets_1D[b][smpl_idx,:].float()
+            smpl_pred = preds_1D[b][smpl_idx]
+            smpl_target = targets_1D[b][smpl_idx].float()
             if ch ==1:# '''l1 distance = abs(x1-x2)'''
                 pi_pred = torch.clamp(torch.abs(smpl_pred-smpl_pred.permute(1,0)), max=5.)
-                pi_target = (torch.abs(smpl_target - smpl_target.permute(1,0))>0.5).float()
             else:#'''cosine distance = 1-(x1x2)/(|x1|*|x2|)'''
                 pred_numi = torch.matmul(smpl_pred, smpl_pred.permute(1,0)) #[N, N]
                 pred_tmp  = smpl_pred.pow(2).sum(axis=1).pow(0.5) # size [N]
-                pred_demi = torch.matmul(pred_tmp[:,None], pred_tmp[None,:])
+                pred_demi = torch.matmul(pred_tmp[:,None], pred_tmp[None,:]) #[N,N]
                 pi_pred   = 1 - pred_numi/pred_demi #[N, N]
 
+            with torch.no_grad():
                 target_numi = torch.matmul(smpl_target, smpl_target.permute(1,0))
-                target_tmp  = smpl_target.pow(2).sum(axis=1).pow(0.5) # size [N]
+                target_tmp  = smpl_target.pow(2).sum(axis=1).pow(0.5)
                 target_demi = torch.matmul(target_tmp[:,None], target_tmp[None,:])
                 pi_target   = ((target_numi/target_demi)<0.5).float()
 
@@ -213,7 +215,6 @@ class PermuInvLoss(nn.Module):
                 smpl_weight = weight_1D[b][smpl_idx, :]
                 pi_obj_wght = smpl_weight + smpl_weight.permute(1,0)
             elif self.smpl_wght_en>0.0:
-                smpl_wght   = torch.stack(smpl_wght) #[N, 1]
                 pi_obj_wght = (smpl_wght + smpl_wght.permute(1,0))
             else:
                 pi_obj_wght = None
@@ -227,9 +228,9 @@ class PermuInvLoss(nn.Module):
             if pi_obj_wght is not None:
                 loss = torch.mul(loss, pi_obj_wght)
 
-            loss = loss[loss>sigma]
-            if loss.size(0)>0:
-                all_loss.append(loss.mean())
+            flag = (loss>sigma).float()
+            loss = (loss*flag).sum()/(flag.sum()+1.)
+            all_loss.append(loss)
 
             # for evaluation:
             eval_pi0.append((pi_pred*(pi_target==0).float()).mean())

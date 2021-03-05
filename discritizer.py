@@ -6,7 +6,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-
 def vis_meanshift_result(oriI, mf_labelI, new_labelM):
     '''
     @Param: oriI | mf_labelI -- [ht, wd]
@@ -89,9 +88,6 @@ def extract_candidates(labelImgs, intensityImgs, xAxisI, yAxisI, ht, wd,
             merge_thr -- intensity threshold for merging non-connected components
     @Output: updated labelI and list of bboxes, each in size [N, 7]
     '''
-
-
-    ## todo::yjl:: check logic, axis_x why 0 elements
     def empty_case():
         # no candidates to process, construct a all-0 BG case
         # [bth_idx, x0, y0, x1, y1, int_label, mean_intensity]
@@ -103,24 +99,29 @@ def extract_candidates(labelImgs, intensityImgs, xAxisI, yAxisI, ht, wd,
         img = labelImgs[0].reshape(1, ht, wd)*0.
         return cur_bboxes, img
 
-    def merge_disconnected_regions(mean_intensity, FG_onehot):
-        # mean_intensity -- [N']
-        # FG_onehot -- [N', ht*wd]
+    def merge_disconnected_regions(mean_intensity, labelI_onehot, keep):
+        # mean_intensity -- [N]
+        # labelI_onehot -- [N, ht*wd]
+        # keep -- [N], element is true/false, indicating to be kept or not
         diff  = torch.abs(mean_intensity[:, None] - mean_intensity[None, :]) #[N', N']
         merge = diff < merge_thr
         merge_idxes, new_masks = [], []
         for i in range(diff.size(0)):
-            if merge[i].sum() == 1:
+            if not keep[i]:
                 continue
 
-            # flag to remove duplicate merging
-            flag = True
+            new_masks.append(labelI_onehot[i:i+1, :].float())
+
+            # merging disconnected components
+            if merge[i].sum() == 1:
+                continue
+            flag = True  # flag to help removing duplicate merging
             if len(merge_idxes) > 0:
                 siml = torch.logical_xor(merge[i][None, :], merge[merge_idxes]).sum(axis=-1)
                 flag = False if 0 in siml else True
             if flag:
                 merge_idxes.append(i)
-                new_mask = (FG_onehot[merge[i]].sum(axis=0)>0).float() #[ht*wd]
+                new_mask = (labelI_onehot[merge[i]].sum(axis=0)>0).float() #[ht*wd]
                 new_masks.append(new_mask[None, :])
         return new_masks
 
@@ -135,64 +136,52 @@ def extract_candidates(labelImgs, intensityImgs, xAxisI, yAxisI, ht, wd,
     bs = labelImgs.size(0)
     new_labelI, bboxes = [], []
     for bk in range(bs):
-        labelI          = labelImgs[bk] #[ht*wd]
         intensityI      = intensityImgs[bk] # [1, ht*wd]
+        labelI          = labelImgs[bk] #[ht*wd]
         N               = labelI.max() + 1
-        labelI_onehot_0 = torch.eye(N)[labelI.long()].permute(1, 0) #[N, ht*wd]
+        labelI_onehot   = F.one_hot(labelI.long(), N).permute(1,0).float() #[N, ht*wd]
 
         # remove BG masks
-        area           = labelI_onehot_0.sum(axis=-1) # [N]
-        mean_intensity = (labelI_onehot_0 * intensityI).sum(axis=-1)/(area+1) #[N]
-        keep           = mean_intensity > bg_thr    # bool tensor in size [N]
+        area           = labelI_onehot.sum(axis=-1) # [N]
+        mean_intensity = (labelI_onehot * intensityI).sum(axis=-1)/(area+1) #[N]
+        keep           = (mean_intensity>bg_thr) * (area>size_thr) # [N]
 
         # if no possible candidates, skip
-        if not keep.max():
+        # get each connected components and their merging result
+        new_masks = merge_disconnected_regions(mean_intensity, labelI_onehot, keep)
+        if len(new_masks)==0:
             cur_bboxes, labelI_onehot = empty_case()
         else:
-            if keep.sum()>num_keep:
-                # select the top K of area for further process
-                area[torch.logical_not(keep)] = 0
-                idxes = torch.topk(area, num_keep)[1]
-                keep[:] = False
-                keep[idxes] = True
+            labelI_onehot  = torch.cat(new_masks, axis=0) #[N*, ht*wd]
+            area           = labelI_onehot.sum(axis=-1) # [N*]
 
-            # get each connected components and their merging result
-            FG_onehot      = labelI_onehot_0[keep] # [N', ht*wd]
-            mean_intensity = mean_intensity[keep]  #[N']
-            new_masks      = merge_disconnected_regions(mean_intensity, FG_onehot)
-            labelI_onehot  = torch.cat([FG_onehot] + new_masks, axis=0) #[N*, ht*wd]
+            # select the top K of area for further process
+            if labelI_onehot.size(0)>num_keep:
+                idxes = torch.topk(area, num_keep)[1]
+                labelI_onehot = labelI_onehot[idxes]
+                area = area[idxes]
 
             # properties
-            area           = labelI_onehot.sum(axis=-1) # [N*]
             mean_intensity = (labelI_onehot * intensityI).sum(axis=-1)/(area+1) #[N*]
+            base_tmpl      = torch.ones_like(mean_intensity, dtype=torch.float)
+            bth_idx        = base_tmpl * bk  # [N*]
+            int_label      = torch.cumsum(base_tmpl, axis=0)-1 # [N*]
 
-            # remove noise candidates
-            keep           = area > size_thr
-            if not keep.max():
-                cur_bboxes, labelI_onehot = empty_case()
-            else:
-                labelI_onehot  = labelI_onehot[keep]   #[N**, ht*wd]
-                mean_intensity = mean_intensity[keep]  #[N**]
+            # bbox coords
+            x_axis = labelI_onehot * xAxisI
+            y_axis = labelI_onehot * yAxisI
+            x1     = x_axis.max(axis=-1)[0] # [N*]
+            y1     = y_axis.max(axis=-1)[0] # [N*]
 
-                base_tmpl      = torch.ones_like(mean_intensity, dtype=torch.float)
-                bth_idx        = base_tmpl * bk  # [N**]
-                int_label      = torch.cumsum(base_tmpl, axis=0)-1 # [N**]
+            x_axis[labelI_onehot==0] = wd
+            y_axis[labelI_onehot==0] = ht
+            x0     = x_axis.min(axis=-1)[0] # [N*]
+            y0     = y_axis.min(axis=-1)[0] # [N*]
 
-                # bbox coords
-                x_axis = labelI_onehot * xAxisI
-                y_axis = labelI_onehot * yAxisI
-                x1     = x_axis.max(axis=-1)[0] # [N**]
-                y1     = y_axis.max(axis=-1)[0] # [N**]
-
-                x_axis[labelI_onehot==0] = wd
-                y_axis[labelI_onehot==0] = ht
-                x0     = x_axis.min(axis=-1)[0] # [N**]
-                y0     = y_axis.min(axis=-1)[0] # [N**]
-
-                # a candidate
-                tmp = [bth_idx, x0, y0, x1, y1, int_label, mean_intensity]
-                cur_bboxes = torch.stack(tmp, axis=1)
-                labelI_onehot = labelI_onehot.view(-1, ht, wd)
+            # a candidate
+            tmp = [bth_idx, x0, y0, x1, y1, int_label, mean_intensity]
+            cur_bboxes = torch.stack(tmp, axis=1)
+            labelI_onehot = labelI_onehot.view(-1, ht, wd)
 
         bboxes.append(cur_bboxes)
         new_labelI.append(labelI_onehot)
@@ -330,30 +319,31 @@ class MeanshiftCluster_2(nn.Module):
     '''
     GPU meanshift and labeling, implemented by yjl, at 20201106
     '''
-    def __init__(self, spatial_radius=9, range_radius=0.5,
-                       epsilon=1e-2, max_iteration=3, cuda=True):
+    def __init__(self, spatial_radius=9, range_radius=0.5, num_iteration=4,
+                       cuda=True, use_spatial=False):
         super(MeanshiftCluster_2, self).__init__()
         self.sradius     = spatial_radius
-        self.rradius     = range_radius
-        self.epsilon     = epsilon
-        self.max_iter    = max_iteration
-        self.cuda        = cuda
+        self.sdiameter   = spatial_radius *2 + 1
 
+        self.rradius     = range_radius
+        self.num_iter    = num_iteration
+        self.cuda        = cuda
+        self.use_spatial = use_spatial
 
         ''' here, computed sigma is tested method, for center weights is 2 to 3 times over edge weights
         '''
         self.ssigma     = np.sqrt(2*self.sradius**2)/1.5
-        ''' linear mapping rng_wght, so that weight(diff>rradius) has tiny value
-        '''
-        self.pi      = 3.141592653589793
-        self.rng_thr = np.exp(-0.5)/(self.rradius*np.sqrt(2*self.pi))
 
-        self.sdiameter   = spatial_radius *2 + 1
+        pi            = 3.141592653589793
+        self.sqrt_pi  = np.sqrt(2*pi)
+        self.rsigma   = self.rradius/3.0
+
         self.nei_kernel, self.rng_kernel, self.spt_wght = self.create_mf_kernels()
 
 
     def gaussian(self, x, sigma=1.0):
-        return torch.exp(-0.5*((x/sigma))**2) / (sigma*np.sqrt(2*self.pi))
+        expVal = torch.mul(-0.5, torch.pow(torch.mul(x, 1.0/sigma), 2))
+        return torch.mul(torch.exp(expVal), 1.0/(sigma*self.sqrt_pi))
 
     def create_mf_kernels(self):
         '''
@@ -376,15 +366,14 @@ class MeanshiftCluster_2(nn.Module):
         rng_kernel[:, cy, cx]   += 1
 
         # pre-computed sptial weights
-        spt_kernel = spt_kernel.reshape(-1) #[K*K]
-        spt_wght   = self.gaussian(spt_kernel, sigma=self.ssigma)
+        spt_wght = None
+        if self.use_spatial:
+            spt_kernel = spt_kernel.reshape(-1) #[K*K]
+            spt_wght   = self.gaussian(spt_kernel, sigma=self.ssigma)
+            spt_wght   = spt_wght[None, :, None, None]
 
-        # extend dimension
         nei_kernel, rng_kernel = nei_kernel[:, None, :, :], rng_kernel[:, None, :, :]
-        spt_wght = spt_wght[None, :, None, None]
-
         return nei_kernel, rng_kernel, spt_wght
-
 
     def compute_pairwise_conv(self, tensor, kernel):
         """
@@ -401,27 +390,22 @@ class MeanshiftCluster_2(nn.Module):
         assert(out.shape[2:] == tensor.shape[2:])
         return out
 
-    def meanshift(self, features, has_spatial=True):
+    def meanshift(self, features):
         '''
         @func: meanshift segmentation algorithm:
              https://www.cnblogs.com/ariel-dreamland/p/9419154.html#:~:text=Mean%20Shift%E7%AE%97%E6%B3%95%EF%BC%8C%E4%B8%80%E8%88%AC%E6%98%AF,%E7%9B%AE%E6%A0%87%E8%B7%9F%E8%B8%AA%E5%92%8C%E5%9B%BE%E5%83%8F%E5%88%86%E5%89%B2%E3%80%82
         @Param: input - [bs, 1, ht, wd]
         '''
         x = features
-        for _ in range(self.max_iter):
+        for _ in range(self.num_iter):
             nei_x    = self.compute_pairwise_conv(x, self.nei_kernel)
             rng_diff = self.compute_pairwise_conv(x, self.rng_kernel)
-            rng_wght = self.gaussian(rng_diff, self.rradius) # [bs, N, ht, wd]
-            flag     = rng_wght<self.rng_thr
-            rng_wght[flag] = rng_wght[flag]/10.
-            if has_spatial:
-                rng_wght = rng_wght * self.spt_wght
+            rng_wght = self.gaussian(rng_diff, sigma=self.rsigma) # [bs, nei-size, ht, wd]
+            rng_wght = rng_wght - (rng_wght<self.rradius).float()*rng_wght*.9
 
-            new_x   = ((rng_wght*nei_x).sum(axis=1)/rng_wght.sum(axis=1))[:, None, :, :]
-            if torch.abs(new_x-x).max()<self.epsilon:
-                return new_x
-            else:
-                x = new_x
+            if self.use_spatial:
+                rng_wght = rng_wght * self.spt_wght
+            x    = ((rng_wght*nei_x).sum(axis=1)/rng_wght.sum(axis=1))[:, None, :, :]
         return x
 
     @torch.no_grad()
@@ -460,22 +444,20 @@ class MeanshiftCluster_2(nn.Module):
                 labels.append(new_labelM)
                 bboxes.append(mf_bboxes)
         else:
-            axis_x, axis_y = np.meshgrid(range(wd), range(ht))
-            axis_x = torch.FloatTensor(axis_x).view(1, -1)
-            axis_y = torch.FloatTensor(axis_y).view(1, -1)
-            if relu_feas.is_cuda:
-                axis_x, axis_y = axis_x.cuda(), axis_y.cuda()
+            one_tmpl = torch.ones([ht, wd])
+            axis_x   = torch.cumsum(one_tmpl, axis=1).view(1, -1) - 1  # axis starts from 0
+            axis_y   = torch.cumsum(one_tmpl, axis=0).view(1, -1) - 1
             labels, bboxes = extract_candidates(labelImgs.view(bs, -1),
-                                                relu_feas.view(bs, 1, -1),
-                                                axis_x, axis_y,
-                                                ht, wd,
-                                                cand_params=cand_params,
-                                                merge_thr=self.rradius)
+                                        relu_feas.view(bs, 1, -1),
+                                        axis_x, axis_y,
+                                        ht, wd,
+                                        cand_params=cand_params,
+                                        merge_thr=self.rradius)
         if False:
             bk = 0
             print('batch element ', bk, ': ', bboxes[bk].size(0))
             vis_meanshift_result(relu_feas[bk, 0].cpu().detach().numpy(),
-                                 labelImgs[bk].cpu().detach().numpy(),
+                                 mf_fea[bk].cpu().detach().numpy(),
                                  labels[bk].cpu().detach().numpy())
 
         return {'mask': labels,

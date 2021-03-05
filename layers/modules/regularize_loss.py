@@ -1,4 +1,3 @@
-#copyright (c) 2021-present, jialin yuan@Deep Vision Group
 import numpy as np
 import torch
 from torch import nn
@@ -16,10 +15,11 @@ class QuantityLoss(nn.Module):
         @Param: preds -- instance map after relu. size [bs, 1, ht, wd]
         '''
         assert(preds.size()[1]==1)
-        if preds.max() > 0:
-            return torch.abs(preds[preds>0] - torch.round(preds[preds>0])).mean()
-        else:
-            return None
+        with torch.no_grad():
+            effI = (preds > 0).float()
+
+        loss = (torch.abs(preds - torch.round(preds))*effI).sum()/(effI.sum()+1.0)
+        return torch.abs(preds[preds>0] - torch.round(preds[preds>0])).mean()
 
 class MumfordShahLoss(nn.Module):
     '''This class computes the Mumford-Shah regularization loss on the prediction of the network.
