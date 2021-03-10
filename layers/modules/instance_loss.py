@@ -305,34 +305,6 @@ class PermuInvLossDilatedConv(nn.Module):
         out  = out.permute(1,0,2,3).reshape(kernel.size(0), -1) # [N, :]
         return out
 
-    def pi_l1_loss(self, pi_pred, pi_target):
-        '''
-        Params: pi_pred -- float tensor in size [bs, N, ht, wd]
-                pi_target -- float tensor in size [bs, N, ht, wd, N], with value {0, 1}, which
-                            ** 1 for pixels belonging to different object
-                            ** 0 for pixels belonging to same object
-        '''
-        loss_pi_1 = adjust_smooth_l1_loss(F.relu(self.margin-pi_pred))
-        loss_pi_0 = adjust_smooth_l1_loss(pi_pred)
-
-        loss = loss_pi_1*pi_target*self.pos_wght + loss_pi_0*(1.0-pi_target)
-        return loss
-
-    def pi_exp_loss(self, pi_pred, pi_target):
-        '''
-        @ refering paper 'semantic instance segmentation via deep matric learning
-        Params: pi_pred -- float tensor in size [N, N]
-                pi_target -- float tensor in size [N, N], with value {0, 1}
-                            ** 1 for pixels belonging to different object
-                            ** 0 for pixels belonging to same object
-        '''
-        pi_diff = torch.clamp(torch.abs(pi_pred), 1e-4, 3.0).float()
-        pi_sims = 2.0*(1.0-torch.sigmoid(pi_diff))
-
-        loss = -(pi_target       * torch.log(1.0-pi_sims)*self.pos_wght + \
-                 (1.0-pi_target) * torch.log(pi_sims))
-        return loss
-
     def forward(self, preds, targets, weights=None, BG=False):
         '''
         @func:
