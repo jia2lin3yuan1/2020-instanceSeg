@@ -2,19 +2,17 @@ import torch, torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models.resnet import Bottleneck
-import numpy as np
-from itertools import product
-from math import sqrt
+import torch.backends.cudnn as cudnn
+
 from typing import List
 from collections import defaultdict
 
 from backbone import construct_backbone
-from discritizer import Discritizer
 from refineNet import RefineNet
 
-import torch.backends.cudnn as cudnn
-from utils import timer
+from layers.discritizer import Discritizer
 from utils.functions import MovingAverage, make_net
+from utils import timer
 
 from matplotlib import pyplot as plt
 
